@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars.
+
+# ---- Required ---------------------------------------------------------------
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Naming / placement.
+location            = "eastus"
+name_prefix         = "dotnetapp" # 2-11 chars, lowercase letters/digits, starts with a letter
+resource_group_name = "rg-dotnetapp"
+
+# OpenTelemetry (non-secret) configuration.
+otel_exporter_otlp_endpoint = "https://otel.example.com:4318"
+otel_exporter_otlp_protocol = "http/protobuf"
+otel_service_name           = "dot-net-app"
+aspnetcore_environment      = "Production"
+
+# The OTLP export headers carry the Authorization bearer token, so this is a
+# SECRET. It is stored in Azure Key Vault and injected into the app as a
+# secret reference. Prefer setting it via TF_VAR_otel_exporter_otlp_headers
+# in your shell instead of committing it here.
+otel_exporter_otlp_headers = "Authorization=Bearer <your-token>"
+
+# ---- Optional ---------------------------------------------------------------
+
+# Deploy a pre-built image instead of building/pushing here. Leave unset (or
+# empty) to build the in-repo app image and push it to the ACR created here.
+# container_image = ""

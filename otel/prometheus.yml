@@ -1,0 +1,17 @@
+# Prometheus configuration
+# -------------------------
+# Stores the metrics that Alloy pushes in via remote-write. Grafana queries
+# this instance as its default datasource for building dashboards.
+#
+# Remote-write receiving is enabled via the --web.enable-remote-write-receiver
+# flag in docker-compose.yml, so no scrape_configs are strictly required for
+# the app metrics. A self-scrape is included for basic Prometheus health.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,51 @@
+# OTLP inspection proxy
+# ---------------------
+# A standard OpenTelemetry Collector placed BETWEEN the app and Grafana Alloy.
+# Its only jobs are:
+#   1. Receive OTLP (gRPC on 4317, HTTP on 4318) from the app.
+#   2. Print every span, metric, and log record in full via the debug exporter
+#      so you can watch the raw OTLP payloads with:  docker compose logs -f otlp-proxy
+#   3. Forward the exact same telemetry on to Alloy for storage/dashboards.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Dumps complete telemetry contents to stdout — this is what lets you
+  # "see what the messages look like".
+  debug:
+    verbosity: detailed
+    sampling_initial: 100
+    sampling_thereafter: 100
+
+  # Forward everything on to Grafana Alloy (OTLP/gRPC).
+  otlp/alloy:
+    endpoint: alloy:4317
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp/alloy]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp/alloy]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp/alloy]
