@@ -1,0 +1,99 @@
+// Grafana Alloy configuration
+// ----------------------------
+// Alloy is Grafana's vendor-neutral distribution of the OpenTelemetry Collector.
+// Here it receives OTLP telemetry (forwarded from the inspection proxy) and:
+//   * converts OTLP metrics to Prometheus format and exposes them for scraping
+//   * logs traces/logs via the debug exporter (view in the Alloy UI at :12345)
+//
+// The built-in Alloy UI is available at http://localhost:12345 where you can
+// inspect the live pipeline graph and component health. For full dashboards,
+// point Grafana at the Prometheus datasource wired up in docker-compose.
+
+// ---- OTLP receiver --------------------------------------------------------
+// Accepts telemetry forwarded by the otlp-proxy over gRPC (4317) and HTTP (4318).
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+  }
+}
+
+// ---- Batch processor ------------------------------------------------------
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.exporter.prometheus.default.input]
+    // Fan out traces/logs to both the debug output (so you can still watch the
+    // raw OTLP in the Alloy logs) and to Tempo/Loki for querying in Grafana.
+    traces  = [otelcol.exporter.debug.default.input, otelcol.exporter.otlp.tempo.input]
+    logs    = [otelcol.exporter.debug.default.input, otelcol.exporter.loki.default.input]
+  }
+}
+
+// ---- Metrics: OTLP -> Prometheus ------------------------------------------
+// Converts OTLP metrics to Prometheus format and hands them to the Prometheus
+// remote-write component, which pushes them into the bundled Prometheus server.
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// ---- Traces: OTLP -> Tempo ------------------------------------------------
+// Forwards traces to the Tempo backend over OTLP/gRPC for querying in Grafana.
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// ---- Logs: OTLP -> Loki ---------------------------------------------------
+// Converts OTLP logs to Loki format and pushes them to the Loki backend.
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ---- Traces & logs: debug output ------------------------------------------
+// Emits detailed span/log output to Alloy's own logs.
+otelcol.exporter.debug "default" {
+  verbosity = "detailed"
+}
+
+// ---- Profiles: -> Pyroscope -----------------------------------------------
+// Forwards collected profiles to the Pyroscope backend.
+pyroscope.write "default" {
+  endpoint {
+    url = "http://pyroscope:4040"
+  }
+}
+
+// ---- Profiles: -> Pyroscope -----------------------------------------------
+// Receives profiles pushed by the .NET Pyroscope profiler over HTTP.
+pyroscope.receive_http "default" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port    = 4040
+  }
+  forward_to = [pyroscope.write.default.receiver]
+}

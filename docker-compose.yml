@@ -1,0 +1,141 @@
+
+
+services:
+  # ---- The instrumented .NET application ---------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dotnet-app
+    environment:
+      # Send all telemetry to the inspection proxy (gRPC OTLP).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otlp-proxy:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_SERVICE_NAME: dot-net-app
+      ASPNETCORE_ENVIRONMENT: Production
+      CORECLR_ENABLE_PROFILING: "1"
+      CORECLR_PROFILER: "{BD1A650D-AC5D-4896-B64F-D6FA25D6B26A}"
+      CORECLR_PROFILER_PATH: "/opt/pyroscope/Pyroscope.Profiler.Native.so"
+      LD_PRELOAD: "/opt/pyroscope/Pyroscope.Linux.ApiWrapper.x64.so"
+      PYROSCOPE_APPLICATION_NAME: "dot-net-app"
+      PYROSCOPE_SERVER_ADDRESS: "http://alloy:4040"
+      PYROSCOPE_PROFILING_ENABLED: "1"
+      PYROSCOPE_PROFILING_WALLTIME_ENABLED: "1"
+      PYROSCOPE_PROFILING_CPU_ENABLED: "1"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - otlp-proxy
+
+  # ---- OTLP inspection proxy ---------------------------------------------
+  # Sits between the app and Alloy; prints every OTLP message to cits logs,
+  # then forwards the telemetry on to Alloy.
+  otlp-proxy:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otlp-proxy
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/otlp-proxy-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (also reachable from the host if desired)
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      - alloy
+
+  # ---- Grafana Alloy (Grafana's OpenTelemetry Collector) -----------------
+  alloy:
+    image: grafana/alloy:latest
+    container_name: alloy
+    pid: "host"
+    privileged: true
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      # The otelcol.exporter.debug component (used to print traces/logs to the
+      # Alloy logs) is experimental, so lower the minimum stability level.
+      - --stability.level=experimental
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./otel/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "12345:12345"   # Alloy UI
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+      - pyroscope
+
+  # ---- Prometheus (metrics store) ----------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver   # accept Alloy's remote_write
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  # ---- Loki (logs store) -------------------------------------------------
+  # Receives logs pushed by Alloy and serves them to Grafana as a datasource.
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+
+  # ---- Tempo (traces store) ----------------------------------------------
+  # Receives OTLP traces from Alloy and serves them to Grafana as a datasource.
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./otel/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP (query API)
+
+  pyroscope:
+    image: grafana/pyroscope:latest
+    container_name: pyroscope
+    volumes:
+      - pyroscope-data:/data
+    ports:
+    - "4040:4040"
+
+  # ---- Grafana (dashboards) ----------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./otel/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+      - pyroscope
+
+volumes:
+  alloy-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+  pyroscope-data:

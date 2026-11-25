@@ -1,0 +1,19 @@
+# Build artifacts — rebuilt inside the image, must not leak from host.
+bin/
+obj/
+
+# IDE / tooling
+.idea/
+.vs/
+*.user
+
+# Git & docs
+.git/
+.gitignore
+README.md
+
+# Compose / container assets (not needed in the app image build context)
+docker-compose.yml
+Dockerfile
+.dockerignore
+otel/
